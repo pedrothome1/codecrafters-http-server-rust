@@ -21,9 +21,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let path = tokens[1];
 
                 let response = if path == "/" {
-                    "HTTP/1.1 200 OK\r\n\r\n"
+                    "HTTP/1.1 200 OK\r\n\r\n".to_string()
+                } else if path.starts_with("/echo/") {
+                    let string = path[1..].splitn(2, '/').skip(1).next().unwrap();
+
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+                        string.len(),
+                        string
+                    )
                 } else {
-                    "HTTP/1.1 404 Not Found\r\n\r\n"
+                    "HTTP/1.1 404 Not Found\r\n\r\n".to_string()
                 };
 
                 stream.write_all(response.as_bytes())?;
