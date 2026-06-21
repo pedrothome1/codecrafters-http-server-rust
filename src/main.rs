@@ -82,8 +82,14 @@ fn handle_connection(stream: &TcpStream, args: &Args) -> Result<(), Box<dyn Erro
 
 type ResponseResult = Result<Response, Box<dyn Error>>;
 
-fn root_handler(_: &Request) -> ResponseResult {
-    Ok(Response::new("200 OK", Headers::new(), None))
+fn root_handler(request: &Request) -> ResponseResult {
+    let mut headers = Headers::new();
+
+    if let Some(method) = request.encode_with.as_ref().filter(|&h| h == "gzip") {
+        headers.set("Content-Encoding", method)
+    }
+
+    Ok(Response::new("200 OK", headers, None))
 }
 
 fn echo_handler(request: &Request) -> ResponseResult {
@@ -92,12 +98,20 @@ fn echo_handler(request: &Request) -> ResponseResult {
     let mut headers = Headers::new();
     headers.add("Content-Type", "text/plain");
 
+    if let Some(method) = request.encode_with.as_ref().filter(|&h| h == "gzip") {
+        headers.set("Content-Encoding", method)
+    }
+
     Ok(Response::new("200 OK", headers, Some(string)))
 }
 
 fn user_agent_handler(request: &Request) -> ResponseResult {
     let mut headers = Headers::new();
     headers.add("Content-Type", "text/plain");
+
+    if let Some(method) = request.encode_with.as_ref().filter(|&h| h == "gzip") {
+        headers.set("Content-Encoding", method)
+    }
 
     Ok(Response::new("200 OK", headers, request.headers.get("User-Agent")))
 }
@@ -122,6 +136,10 @@ fn read_file_handler(request: &Request, args: &Args) -> ResponseResult {
     let mut headers = Headers::new();
     headers.add("Content-Type", "application/octet-stream");
 
+    if let Some(method) = request.encode_with.as_ref().filter(|&h| h == "gzip") {
+        headers.set("Content-Encoding", method)
+    }
+
     Ok(Response::new("200 OK", headers, Some(&contents)))
 }
 
@@ -130,6 +148,12 @@ fn write_file_handler(request: &Request, args: &Args) -> ResponseResult {
     let path: PathBuf = [&args.directory, filename].iter().collect();
 
     fs::write(path, &request.body)?;
+
+    let mut headers = Headers::new();
+
+    if let Some(method) = request.encode_with.as_ref().filter(|&h| h == "gzip") {
+        headers.set("Content-Encoding", method)
+    }
 
     Ok(Response::new("201 Created", Headers::new(), None))
 }
@@ -178,5 +202,11 @@ fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Request, Box<dyn E
         request_line.next().ok_or("expected http version")?.trim(),
     );
 
-    Ok(Request::new(method, path, version, headers, body))
+    let encode_with = if let Some(accept_encoding) = headers.get("Accept-Encoding") {
+        accept_encoding.split(",").find(|x| x.trim().starts_with("gzip")).map(|_| "gzip".to_owned())
+    } else {
+        None
+    };
+
+    Ok(Request::new(method, path, version, headers, body, encode_with))
 }
