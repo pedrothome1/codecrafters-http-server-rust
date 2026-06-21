@@ -5,7 +5,7 @@ use codecrafters_http_server::response::Response;
 use codecrafters_http_server::thread_pool::ThreadPool;
 use std::error::Error;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -62,8 +62,10 @@ fn handle_connection(stream: &TcpStream, args: &Args) -> Result<(), Box<dyn Erro
             user_agent_handler(&request)?
         } else if request.path == "/headers" {
             print_headers_handler(&request)?
-        } else if request.path.starts_with("/files") {
-            files_handler(&request, &args)?
+        } else if request.method == "GET" && request.path.starts_with("/files") {
+            read_file_handler(&request, &args)?
+        } else if request.method == "POST" && request.path.starts_with("/files") {
+            write_file_handler(&request, &args)?
         } else {
             Response::new("404 Not Found", Headers::new(), None)
         };
@@ -109,7 +111,7 @@ fn print_headers_handler(request: &Request) -> ResponseResult {
     Ok(Response::new("200 OK", Headers::new(), None))
 }
 
-fn files_handler(request: &Request, args: &Args) -> ResponseResult {
+fn read_file_handler(request: &Request, args: &Args) -> ResponseResult {
     let filename = &request.path["/files/".len()..];
     let path: PathBuf = [&args.directory, filename].iter().collect();
 
@@ -121,6 +123,15 @@ fn files_handler(request: &Request, args: &Args) -> ResponseResult {
     headers.add("Content-Type", "application/octet-stream");
 
     Ok(Response::new("200 OK", headers, Some(&contents)))
+}
+
+fn write_file_handler(request: &Request, args: &Args) -> ResponseResult {
+    let filename = &request.path["/files/".len()..];
+    let path: PathBuf = [&args.directory, filename].iter().collect();
+
+    fs::write(path, &request.body)?;
+
+    Ok(Response::new("201 Created", Headers::new(), None))
 }
 
 fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Request, Box<dyn Error>> {
@@ -148,6 +159,18 @@ fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Request, Box<dyn E
         headers.add(name, value.trim());
     }
 
+    let content_length = headers.get("Content-Length").map(|h| h.trim());
+    let body = if content_length.is_some_and(|h| !h.is_empty() && h != "0") {
+        let length: usize = content_length.unwrap().parse()?;
+
+        let mut buffer = vec![0u8; length];
+        reader.read_exact(&mut buffer)?;
+
+        buffer
+    } else {
+        vec![]
+    };
+
     let mut request_line = request_line.splitn(3, ' ');
     let (method, path, version) = (
         request_line.next().ok_or("expected request method")?,
@@ -155,5 +178,5 @@ fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Request, Box<dyn E
         request_line.next().ok_or("expected http version")?.trim(),
     );
 
-    Ok(Request::new(method, path, version, headers))
+    Ok(Request::new(method, path, version, headers, body))
 }
