@@ -1,13 +1,25 @@
+use clap::Parser;
 use codecrafters_http_server::header::Headers;
 use codecrafters_http_server::request::Request;
 use codecrafters_http_server::response::Response;
 use codecrafters_http_server::thread_pool::ThreadPool;
 use std::error::Error;
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
+#[derive(Parser, Debug)]
+struct Args {
+    #[arg(long, default_value_t = String::from("."))]
+    directory: String,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
+    let args = Arc::new(Args::parse());
+
     let addr = "127.0.0.1:4221";
     let listener = TcpListener::bind(addr)?;
     let pool = ThreadPool::new(4);
@@ -16,11 +28,15 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     for stream in listener.incoming() {
         match stream {
-            Ok(stream) => pool.execute(move || {
-                if let Err(e) = handle_connection(&stream) {
-                    eprintln!("Connection closed: {}", e);
-                }
-            }),
+            Ok(stream) => {
+                let args = Arc::clone(&args);
+
+                pool.execute(move || {
+                    if let Err(e) = handle_connection(&stream, &args) {
+                        eprintln!("Connection closed: {}", e);
+                    }
+                });
+            }
             Err(e) => {
                 eprintln!("Error getting connection: {}", e);
             }
@@ -30,7 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn handle_connection(stream: &TcpStream) -> Result<(), Box<dyn Error>> {
+fn handle_connection(stream: &TcpStream, args: &Args) -> Result<(), Box<dyn Error>> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
 
     let mut reader = BufReader::new(stream);
@@ -46,6 +62,8 @@ fn handle_connection(stream: &TcpStream) -> Result<(), Box<dyn Error>> {
             user_agent_handler(&request)?
         } else if request.path == "/headers" {
             print_headers_handler(&request)?
+        } else if request.path.starts_with("/files") {
+            files_handler(&request, &args)?
         } else {
             Response::new("404 Not Found", Headers::new(), None)
         };
@@ -89,6 +107,20 @@ fn print_headers_handler(request: &Request) -> ResponseResult {
     }
 
     Ok(Response::new("200 OK", Headers::new(), None))
+}
+
+fn files_handler(request: &Request, args: &Args) -> ResponseResult {
+    let filename = &request.path["/files/".len()..];
+    let path: PathBuf = [&args.directory, filename].iter().collect();
+
+    let Ok(contents) = fs::read_to_string(path) else {
+        return Ok(Response::new("404 Not Found", Headers::new(), None));
+    };
+
+    let mut headers = Headers::new();
+    headers.add("Content-Type", "application/octet-stream");
+
+    Ok(Response::new("200 OK", headers, Some(&contents)))
 }
 
 fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Request, Box<dyn Error>> {
