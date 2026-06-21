@@ -56,7 +56,7 @@ fn handle_connection(stream: &TcpStream, args: &Args) -> Result<(), Box<dyn Erro
     loop {
         let request = read_request(&mut reader)?;
 
-        let response = if request.path == "/" {
+        let mut response = if request.path == "/" {
             root_handler(&request)?
         } else if request.path.starts_with("/echo/") {
             echo_handler(&request)?
@@ -72,9 +72,16 @@ fn handle_connection(stream: &TcpStream, args: &Args) -> Result<(), Box<dyn Erro
             Response::new("404 Not Found", Headers::new(), None)
         };
 
+        let close_connection = if request.headers.get("Connection").is_some_and(|h| h == "close") {
+            response.headers.set("Connection", "close");
+            true
+        } else {
+            false
+        };
+
         reader.get_mut().write_all(response.as_bytes().as_ref())?;
 
-        if request.headers.get("Connection").is_some_and(|h| h == "close") {
+        if close_connection {
             break;
         }
     }
