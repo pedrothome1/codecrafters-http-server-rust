@@ -1,44 +1,39 @@
 use crate::header::Headers;
-use std::fmt;
-use std::fmt::Formatter;
 
 pub struct Response {
     status: String,
     pub headers: Headers,
-    body: Option<String>,
+    body: Option<Vec<u8>>,
 }
 
 impl Response {
-    pub fn new(status: &str, headers: Headers, body: Option<&str>) -> Self {
-        Response { status: status.to_owned(), headers, body: body.map(|s| s.to_owned()) }
+    pub fn new(status: &str, headers: Headers, body: Option<Vec<u8>>) -> Self {
+        Response { status: status.to_owned(), headers, body }
     }
-}
 
-impl fmt::Display for Response {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    pub fn as_bytes(&self) -> Vec<u8> {
         let mut headers = self.headers.clone();
+        let content_length = self.body.as_ref().map(|b| b.len()).unwrap_or_else(|| 0);
+        headers.set("Content-Length", content_length.to_string());
 
-        headers.set(
-            "Content-Length",
-            self.body.as_ref().map(|b| b.len().to_string()).unwrap_or_else(|| "0".to_owned()),
-        );
-
-        let mut header_lines: Vec<String> = Vec::with_capacity(headers.len() + 1);
+        let mut header_lines: Vec<String> = Vec::with_capacity(headers.len() + 2);
         header_lines.push(format!("HTTP/1.1 {}", self.status));
 
         for header in &headers {
             header_lines.push(format!("{}: {}", header.0, header.1));
         }
 
-        let header_str = header_lines.join("\r\n");
+        let full_header = header_lines.join("\r\n");
 
-        let mut response = vec![&header_str, ""];
-        if self.body.is_some() {
-            response[1] = self.body.as_ref().unwrap();
+        let mut response: Vec<u8> = Vec::with_capacity(full_header.len() + content_length + 4);
+        response.extend_from_slice(full_header.as_bytes());
+        response.extend_from_slice(b"\r\n\r\n");
+
+        if let Some(body) = self.body.as_ref() {
+            response.extend_from_slice(body)
         }
-        let response = response.join("\r\n\r\n");
 
-        write!(f, "{}", response)
+        response
     }
 }
 
@@ -55,8 +50,8 @@ mod tests {
         let response = Response::new("200 OK", headers, None);
 
         assert_eq!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 20\r\n\r\n",
-            response.to_string()
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 0\r\n\r\n",
+            String::from_utf8(response.as_bytes()).unwrap()
         );
     }
 
@@ -67,7 +62,7 @@ mod tests {
         let mut headers = Headers::new();
         headers.add("Content-Type", "text/plain");
 
-        let response = Response::new("200 OK", headers, Some(body));
+        let response = Response::new("200 OK", headers, Some(body.as_bytes().to_vec()));
 
         let expected = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
@@ -75,7 +70,7 @@ mod tests {
             body
         );
 
-        assert_eq!(expected, response.to_string());
+        assert_eq!(expected, String::from_utf8(response.as_bytes()).unwrap());
     }
 
     #[test]
@@ -86,7 +81,7 @@ mod tests {
         headers.add("Content-Length", "123");
         headers.add("Content-Type", "text/plain");
 
-        let response = Response::new("200 OK", headers, Some(body));
+        let response = Response::new("200 OK", headers, Some(body.as_bytes().to_vec()));
 
         let expected = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
@@ -94,6 +89,6 @@ mod tests {
             body
         );
 
-        assert_eq!(expected, response.to_string());
+        assert_eq!(expected, String::from_utf8(response.as_bytes()).unwrap());
     }
 }

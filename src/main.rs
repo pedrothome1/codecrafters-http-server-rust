@@ -3,6 +3,8 @@ use codecrafters_http_server::header::Headers;
 use codecrafters_http_server::request::Request;
 use codecrafters_http_server::response::Response;
 use codecrafters_http_server::thread_pool::ThreadPool;
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use std::error::Error;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -70,7 +72,7 @@ fn handle_connection(stream: &TcpStream, args: &Args) -> Result<(), Box<dyn Erro
             Response::new("404 Not Found", Headers::new(), None)
         };
 
-        reader.get_mut().write_all(response.to_string().as_bytes())?;
+        reader.get_mut().write_all(response.as_bytes().as_ref())?;
 
         if request.headers.get("Connection").is_some_and(|h| h == "close") {
             break;
@@ -98,22 +100,31 @@ fn echo_handler(request: &Request) -> ResponseResult {
     let mut headers = Headers::new();
     headers.add("Content-Type", "text/plain");
 
-    if let Some(method) = request.encode_with.as_ref().filter(|&h| h == "gzip") {
-        headers.set("Content-Encoding", method)
-    }
+    let body = if let Some(method) = request.encode_with.as_ref().filter(|&h| h == "gzip") {
+        headers.set("Content-Encoding", method);
+        gzip_compress(string.as_bytes())?
+    } else {
+        string.as_bytes().to_vec()
+    };
 
-    Ok(Response::new("200 OK", headers, Some(string)))
+    Ok(Response::new("200 OK", headers, Some(body)))
 }
 
 fn user_agent_handler(request: &Request) -> ResponseResult {
     let mut headers = Headers::new();
     headers.add("Content-Type", "text/plain");
 
+    let mut body = request.headers.get("User-Agent").map(|s| s.as_bytes().to_vec());
+
     if let Some(method) = request.encode_with.as_ref().filter(|&h| h == "gzip") {
-        headers.set("Content-Encoding", method)
+        headers.set("Content-Encoding", method);
+
+        if let Some(body_bytes) = body.as_ref() {
+            body = Some(gzip_compress(body_bytes)?);
+        }
     }
 
-    Ok(Response::new("200 OK", headers, request.headers.get("User-Agent")))
+    Ok(Response::new("200 OK", headers, body))
 }
 
 fn print_headers_handler(request: &Request) -> ResponseResult {
@@ -136,11 +147,14 @@ fn read_file_handler(request: &Request, args: &Args) -> ResponseResult {
     let mut headers = Headers::new();
     headers.add("Content-Type", "application/octet-stream");
 
-    if let Some(method) = request.encode_with.as_ref().filter(|&h| h == "gzip") {
-        headers.set("Content-Encoding", method)
-    }
+    let body = if let Some(method) = request.encode_with.as_ref().filter(|&h| h == "gzip") {
+        headers.set("Content-Encoding", method);
+        gzip_compress(&contents.as_bytes())?
+    } else {
+        contents.into_bytes()
+    };
 
-    Ok(Response::new("200 OK", headers, Some(&contents)))
+    Ok(Response::new("200 OK", headers, Some(body)))
 }
 
 fn write_file_handler(request: &Request, args: &Args) -> ResponseResult {
@@ -152,7 +166,7 @@ fn write_file_handler(request: &Request, args: &Args) -> ResponseResult {
     let mut headers = Headers::new();
 
     if let Some(method) = request.encode_with.as_ref().filter(|&h| h == "gzip") {
-        headers.set("Content-Encoding", method)
+        headers.set("Content-Encoding", method);
     }
 
     Ok(Response::new("201 Created", Headers::new(), None))
@@ -209,4 +223,11 @@ fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Request, Box<dyn E
     };
 
     Ok(Request::new(method, path, version, headers, body, encode_with))
+}
+
+fn gzip_compress(bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(bytes)?;
+
+    Ok(encoder.finish()?)
 }
