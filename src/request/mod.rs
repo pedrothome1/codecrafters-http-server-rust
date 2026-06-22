@@ -11,17 +11,20 @@ pub struct Request {
 
 impl Request {
     pub fn new(
-        method: &str,
-        path: &str,
-        version: &str,
+        method: impl Into<String>,
+        path: impl Into<String>,
+        version: impl Into<String>,
         headers: Headers,
         body: Vec<u8>,
         encode_with: Option<String>,
     ) -> Self {
+        let mut method = method.into();
+        method.make_ascii_uppercase();
+
         Self {
-            method: method.to_ascii_uppercase(),
-            path: path.to_owned(),
-            version: version.to_owned(),
+            method,
+            path: path.into(),
+            version: version.into(),
             headers,
             body,
             encode_with,

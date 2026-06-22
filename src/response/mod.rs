@@ -7,8 +7,8 @@ pub struct Response {
 }
 
 impl Response {
-    pub fn new(status: &str, headers: Headers, body: Option<Vec<u8>>) -> Self {
-        Response { status: status.to_owned(), headers, body }
+    pub fn new(status: impl Into<String>, headers: Headers, body: Option<Vec<u8>>) -> Self {
+        Response { status: status.into(), headers, body }
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
